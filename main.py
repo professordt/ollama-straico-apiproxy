@@ -3,42 +3,34 @@ from fastapi import FastAPI, Request, HTTPException
 from aio_straico import straico_client
 import uvicorn
 
-app = FastAPI()
+app = FastAPI(title="Straico Universal Agent Proxy")
 STRAICO_API_KEY = os.getenv("STRAICO_API_KEY")
 
 @app.get("/")
 async def root():
-    return {"message": "Agent Proxy Active on 11444"}
+    return {"status": "online", "message": "Proxy fixed and running on 11444"}
 
-# 1. This tells your app which Agents you have
 @app.get("/v1/models")
 async def list_models():
     try:
         with straico_client(API_KEY=STRAICO_API_KEY) as client:
-            all_models = []
-            
-            # Fetch Standard LLMs
-            models = client.models()
-            for m in models.keys():
-                all_models.append({"id": m, "object": "model", "owned_by": "straico"})
-            
-            # Fetch your Custom Agents (v0)
-            agents = client.agents()
-            for a in agents:
-                # We prefix with 'agent:' so the proxy knows it's an agent
-                all_models.append({
-                    "id": f"agent:{a['_id']}", 
-                    "object": "model", 
-                    "owned_by": f"straico-agent-{a['name']}"
-                })
-            
-            return {"object": "list", "data": all_models}
+            all_options = []
+            # Standard Models
+            models_data = client.models()
+            for m_name in models_data.keys():
+                all_options.append({"id": m_name, "object": "model", "owned_by": "straico"})
+            # Agents
+            try:
+                agents = client.agents()
+                for agent in agents:
+                    all_options.append({"id": f"agent:{agent['_id']}", "object": "model", "owned_by": f"agent-{agent['name']}"})
+            except: pass
+            return {"object": "list", "data": all_options}
     except Exception as e:
         return {"object": "list", "data": [{"id": "openai/gpt-4o", "object": "model"}]}
 
-# 2. This handles the actual chatting
 @app.post("/v1/chat/completions")
-async def chat(request: Request):
+async def chat_proxy(request: Request):
     body = await request.json()
     model = body.get("model", "")
     messages = body.get("messages", [])
@@ -46,28 +38,36 @@ async def chat(request: Request):
 
     try:
         with straico_client(API_KEY=STRAICO_API_KEY) as client:
-            # --- AGENT LOGIC ---
+            # 🤖 AGENT ROUTE: No keywords, just (agent_id, prompt)
             if model.startswith("agent:"):
                 agent_id = model.split(":")[1]
-                # Use the specific Agent Completion method
-                response = client.agent_prompt_completion(agent_id=agent_id, prompt=prompt)
-                # Agents return the answer in a specific 'completion' field
-                content = response['completion']['choices'][0]['message']['content']
+                res = client.agent_prompt_completion(agent_id, prompt)
+                content = res['completion']['choices'][0]['message']['content']
             
-            # --- STANDARD MODEL LOGIC ---
+            # 📚 RAG ROUTE: No keywords, just (rag_id, model, prompt)
+            elif model.startswith("rag:"):
+                parts = model.replace("rag:", "").split("|")
+                rag_id = parts[0]
+                actual_model = parts[1] if len(parts) > 1 else "openai/gpt-4o"
+                res = client.rag_prompt_completion(rag_id, actual_model, prompt)
+                content = res['completion']['choices'][0]['message']['content']
+            
+            # ⚡ STANDARD ROUTE: No keywords, just (model_name, prompt)
             else:
-                response = client.prompt_completion(model=model, prompt=prompt)
-                # Standard models return answers nested by model name
-                model_key = list(response['completions'].keys())[0]
-                content = response['completions'][model_key]['completion']['choices'][0]['message']['content']
-
+                res = client.prompt_completion(model, prompt)
+                # Standard response is nested under the model name
+                # We dynamically find the model key used in the response
+                model_key = list(res.get("completions", {}).keys())[0]
+                content = res["completions"][model_key]["completion"]["choices"][0]["message"]["content"]
+            
             return {
-                "id": "straico-resp",
+                "id": "straico-proxy",
                 "object": "chat.completion",
                 "model": model,
                 "choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop", "index": 0}]
             }
     except Exception as e:
+        print(f"Error caught: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
