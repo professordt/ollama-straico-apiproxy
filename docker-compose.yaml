@@ -3,11 +3,12 @@ version: '2'
 services:    
   straico_proxy:
     build: .
+    container_name: straico-agent-proxy
     ports: 
-      - "3214:3214"
+      - "11444:3214"
     restart: always
     environment:
       # example
       # - STRAICO_API_KEY=ko-111111111111111111111111111111111111111111111111
-      - STRAICO_API_KEY=<... ADD YOUR STRAICO API KEY HERE >
+      - STRAICO_API_KEY=${STRAICO_API_KEY}
  

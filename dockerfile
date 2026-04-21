@@ -2,10 +2,16 @@ FROM python:3.12-alpine
 
 WORKDIR /app
 
-COPY requirements.txt /app
-RUN pip install --no-cache-dir -r requirements.txt
+# Install aio-straico from GitHub first
+RUN pip install --no-cache-dir git+https://github.com/jayrinaldime/aio-straico.git
+
+# Install other dependencies
+RUN pip install --no-cache-dir fastapi uvicorn langfuse<3.0.0 httpx python-multipart jinja2 aiocache
 
 COPY . /app
+
+# Create agent data directory
+RUN mkdir -p /app/data/agent
 
 EXPOSE 3214
 
